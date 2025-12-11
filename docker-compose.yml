@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-text-to-sql
+    image: rag-text-to-sql:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount uploads directory for persistent document storage
+      - ./data/uploads:/app/data/uploads
+      # Mount Vanna ChromaDB for persistent SQL training data
+      - ./data/vanna_chromadb:/app/data/vanna_chromadb
+    env_file:
+      - .env
+    environment:
+      # Override with Docker-specific settings if needed
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - rag-network
+
+networks:
+  rag-network:
+    driver: bridge
+
+volumes:
+  uploads:
+  vanna_chromadb:

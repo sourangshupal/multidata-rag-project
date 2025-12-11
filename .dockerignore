@@ -1,0 +1,101 @@
+# Docker ignore file
+# Excludes files from Docker build context to reduce image size
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+*.md
+!app/**/*.md
+
+# Uploaded Documents (will be mounted as volume)
+data/uploads/*
+!data/uploads/.gitkeep
+
+# Vanna ChromaDB storage (will be created in container)
+data/vanna_chromadb/
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Model artifacts
+*.h5
+*.pkl
+*.joblib
+
+# Evaluation results
+evaluation_results.json
+
+# Claude Code
+.claude/
+
+# Docker files (don't include in build context)
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Misc
+tmp/
+temp/
+*.bak
+*.swp
