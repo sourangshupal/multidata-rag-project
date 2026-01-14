@@ -1,12 +1,17 @@
 """
 Document Processing Service
 Handles parsing and chunking of various document formats (PDF, DOCX, CSV, JSON).
+
+Now supports context-aware chunking with Docling for improved RAG quality.
 """
 
 from typing import List, Dict, Any
 import tiktoken
+import logging
 from unstructured.partition.auto import partition
 from pathlib import Path
+
+logger = logging.getLogger("rag_app.document_service")
 
 
 def parse_document(file_path: str) -> str:
@@ -146,3 +151,68 @@ def get_document_stats(file_path: str) -> Dict[str, Any]:
         "token_count": len(tokens),
         "estimated_chunks_512": (len(tokens) // 512) + 1
     }
+
+
+def parse_and_chunk_with_context(file_path: str, chunk_size: int = 512, min_chunk_size: int = 256) -> List[Dict[str, Any]]:
+    """
+    Parse and chunk document using Docling's context-aware approach.
+
+    This is the RECOMMENDED method that provides:
+    - Semantic boundary detection (no mid-sentence splits)
+    - Hierarchical heading context preservation
+    - Rich metadata (page numbers, captions, document structure)
+    - Smart merging to ensure chunks are 256-512 tokens (not too small)
+
+    Falls back to traditional token-based chunking if Docling is unavailable.
+
+    Args:
+        file_path: Path to the document file
+        chunk_size: Maximum tokens per chunk (default: 512)
+        min_chunk_size: Minimum tokens per chunk - smaller chunks will be merged (default: 256)
+
+    Returns:
+        List of chunk dictionaries with rich metadata
+    """
+    try:
+        # Try Docling first (context-aware chunking with merging)
+        from app.services.docling_service import parse_and_chunk_document
+
+        logger.info(f"Using Docling for context-aware chunking: {Path(file_path).name}")
+        chunks = parse_and_chunk_document(file_path, chunk_size=chunk_size, min_chunk_size=min_chunk_size)
+
+        logger.info(f"Docling chunking complete: {len(chunks)} chunks with heading context")
+        return chunks
+
+    except ImportError as e:
+        logger.warning(f"Docling not available, falling back to token-based chunking: {e}")
+
+        # Fallback to old method
+        text = parse_document(file_path)
+        chunks = chunk_text(text, chunk_size=chunk_size, overlap=50)
+
+        # Add empty metadata fields for compatibility
+        for chunk in chunks:
+            chunk['headings'] = []
+            chunk['page_numbers'] = []
+            chunk['doc_items'] = []
+            chunk['captions'] = []
+
+        logger.info(f"Token-based chunking complete: {len(chunks)} chunks (no context)")
+        return chunks
+
+    except Exception as e:
+        logger.error(f"Docling failed, falling back to token-based chunking: {e}")
+
+        # Fallback to old method
+        text = parse_document(file_path)
+        chunks = chunk_text(text, chunk_size=chunk_size, overlap=50)
+
+        # Add empty metadata fields for compatibility
+        for chunk in chunks:
+            chunk['headings'] = []
+            chunk['page_numbers'] = []
+            chunk['doc_items'] = []
+            chunk['captions'] = []
+
+        logger.warning(f"Using fallback chunking: {len(chunks)} chunks (no context)")
+        return chunks

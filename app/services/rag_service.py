@@ -125,14 +125,15 @@ class RAGService:
 
     def _build_context(self, chunks: List[Dict[str, Any]]) -> str:
         """
-        Build context string from retrieved chunks.
+        Build context string from retrieved chunks with hierarchical heading context.
 
         Args:
             chunks: List of chunk dictionaries from vector search
 
         Returns:
-            Formatted context string
+            Formatted context string with heading hierarchy
         """
+        import json
         context_parts = []
 
         for i, chunk in enumerate(chunks, 1):
@@ -140,7 +141,20 @@ class RAGService:
             text = chunk.get('text', '')
             score = chunk.get('score', 0.0)
 
-            context_part = f"[Source {i}: {filename} (relevance: {score:.3f})]\n{text}\n"
+            # NEW: Extract heading hierarchy from Docling metadata
+            headings_json = chunk['metadata'].get('headings', '[]')
+            try:
+                headings = json.loads(headings_json) if isinstance(headings_json, str) else headings_json
+            except (json.JSONDecodeError, TypeError):
+                headings = []
+
+            # Build context with heading hierarchy if available
+            if headings and len(headings) > 0:
+                heading_context = " > ".join(headings)
+                context_part = f"[Source {i}: {filename} (relevance: {score:.3f})]\n[Section: {heading_context}]\n{text}\n"
+            else:
+                context_part = f"[Source {i}: {filename} (relevance: {score:.3f})]\n{text}\n"
+
             context_parts.append(context_part)
 
         return "\n".join(context_parts)

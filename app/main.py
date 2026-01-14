@@ -246,13 +246,15 @@ async def upload_document(file: UploadFile = File(...)):
 
         # If cache miss or cache unavailable, process document
         if chunks is None or embeddings is None:
-            # Parse document
-            logger.info(f"Parsing document: {file.filename}")
-            text = parse_document(str(file_path))
-
-            # Chunk text
-            logger.info(f"Chunking text into {settings.CHUNK_SIZE}-token chunks...")
-            chunks = chunk_text(text, chunk_size=settings.CHUNK_SIZE, overlap=settings.CHUNK_OVERLAP)
+            # Parse and chunk with context-aware approach (Docling with smart merging)
+            logger.info(f"Parsing and chunking document with context awareness: {file.filename}")
+            from app.services.document_service import parse_and_chunk_with_context
+            chunks = parse_and_chunk_with_context(
+                str(file_path),
+                chunk_size=settings.CHUNK_SIZE,
+                min_chunk_size=settings.MIN_CHUNK_SIZE
+            )
+            logger.info(f"Created {len(chunks)} context-aware chunks (target {settings.MIN_CHUNK_SIZE}-{settings.CHUNK_SIZE} tokens)")
 
             # Generate embeddings
             logger.info(f"Generating embeddings for {len(chunks)} chunks...")

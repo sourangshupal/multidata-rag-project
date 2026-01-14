@@ -99,6 +99,7 @@ class VectorService:
                 vector_id = f"{filename}_{chunk['chunk_index']}"
 
                 # Prepare metadata
+                import json
                 metadata = {
                     "filename": filename,
                     "chunk_index": chunk['chunk_index'],
@@ -106,6 +107,10 @@ class VectorService:
                     "text": chunk['text'][:1000],  # Limit text size in metadata (Pinecone has limits)
                     "start_char": chunk.get('start_char', 0),
                     "end_char": chunk.get('end_char', 0),
+                    # NEW: Docling enhancements - store as JSON strings
+                    "headings": json.dumps(chunk.get('headings', [])),
+                    "page_numbers": json.dumps(chunk.get('page_numbers', [])),
+                    "has_context": len(chunk.get('headings', [])) > 0  # Quick filter for context-aware chunks
                 }
 
                 # Create vector tuple: (id, values, metadata)

@@ -5,7 +5,10 @@ pydantic-settings
 python-multipart
 
 # Document Processing
-unstructured[all-docs]
+docling                # Advanced PDF parsing with layout analysis
+docling-core           # Chunking infrastructure
+semchunk               # Semantic text splitting (used by HybridChunker)
+unstructured[all-docs] # Keep as fallback for edge cases
 pdfminer.six==20231228  # Pin compatible version for unstructured
 python-magic  # For file type detection (uses system libmagic on macOS)
 pillow  # Image processing for document parsing

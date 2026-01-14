@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     # Text Chunking Configuration
     CHUNK_SIZE: int = 512
+    MIN_CHUNK_SIZE: int = 256  # Minimum chunk size - smaller chunks will be merged
     CHUNK_OVERLAP: int = 50
 
     class Config:
