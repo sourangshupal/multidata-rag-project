@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     # CACHE_DIR: str = "/tmp/cached_chunks"
     UPLOAD_DIR: str = "data/uploads"
     CACHE_DIR: str = "data/cached_chunks"
+
+    # Storage Backend Configuration (NEW)
+    STORAGE_BACKEND: str = "local"  # Options: "local", "s3"
+
+    # S3 Storage Configuration (for Lambda deployment)
+    S3_CACHE_BUCKET: str = ""  # e.g., "my-rag-cache-bucket"
+    AWS_REGION: str = "us-east-1"
+    # AWS credentials from environment or IAM role (recommended for Lambda)
+    # AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are read automatically by boto3
+
     @property
     def is_lambda(self) -> bool:
         """Check if running in AWS Lambda environment."""

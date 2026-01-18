@@ -1,6 +1,8 @@
 """
 Cache Service
 Manages caching of document chunks and embeddings to avoid redundant processing.
+
+Now supports pluggable storage backends (local filesystem or S3).
 """
 
 import hashlib
@@ -10,6 +12,11 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import numpy as np
 
+from app.services.storage_backend import StorageBackend
+from app.services.local_storage import LocalStorageBackend
+from app.services.s3_storage import S3StorageBackend
+from app.config import settings
+
 logger = logging.getLogger("rag_app.cache_service")
 
 
@@ -17,18 +24,39 @@ class CacheService:
     """
     Manages caching of document chunks and embeddings.
     Uses content-based SHA-256 hashing for true deduplication.
+
+    Supports multiple storage backends:
+    - Local filesystem (for development)
+    - AWS S3 (for Lambda deployment)
     """
 
-    def __init__(self, cache_dir: Path):
+    def __init__(self, storage_backend: Optional[StorageBackend] = None):
         """
-        Initialize cache service.
+        Initialize cache service with storage backend.
 
         Args:
-            cache_dir: Directory to store cached data (e.g., data/cached_chunks/)
+            storage_backend: Storage backend to use. If None, auto-selects
+                           based on STORAGE_BACKEND environment variable.
         """
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Cache service initialized at: {self.cache_dir}")
+        if storage_backend is None:
+            # Auto-select backend from config
+            backend_type = getattr(settings, 'STORAGE_BACKEND', 'local').lower()
+
+            if backend_type == "s3":
+                try:
+                    self.storage = S3StorageBackend()
+                    logger.info(f"Using S3 storage (bucket: {settings.S3_CACHE_BUCKET})")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize S3 storage: {e}. Falling back to local.")
+                    self.storage = LocalStorageBackend()
+            elif backend_type == "local":
+                self.storage = LocalStorageBackend()
+                logger.info(f"Using local storage (dir: {settings.CACHE_DIR})")
+            else:
+                raise ValueError(f"Unknown storage backend: {backend_type}")
+        else:
+            self.storage = storage_backend
+            logger.info(f"Using custom storage backend: {type(storage_backend).__name__}")
 
     def compute_document_id(self, file_path: Path) -> str:
         """
@@ -58,38 +86,50 @@ class CacheService:
         logger.debug(f"Computed document ID: {doc_id} for {file_path.name}")
         return doc_id
 
-    def _get_cache_path(self, doc_id: str) -> Path:
-        """Get the cache directory path for a document ID."""
-        return self.cache_dir / doc_id
-
-    def cache_exists(self, doc_id: str) -> bool:
+    def cache_exists(self, doc_id: str, file_extension: str) -> bool:
         """
         Check if valid cache exists for document ID.
-        Requires all three files: chunks.json, embeddings.npy, metadata.json
 
         Args:
             doc_id: Document ID (SHA-256 hash)
+            file_extension: File extension (pdf, txt, md, etc.) - required for S3 folder organization
 
         Returns:
             True if complete cache exists, False otherwise
         """
-        cache_path = self._get_cache_path(doc_id)
-
-        if not cache_path.exists():
+        try:
+            return self.storage.exists(doc_id, file_extension)
+        except Exception as e:
+            logger.warning(f"Error checking cache for {doc_id}: {e}")
             return False
 
-        # Check all required files exist
-        required_files = ['chunks.json', 'embeddings.npy', 'metadata.json']
-        for filename in required_files:
-            if not (cache_path / filename).exists():
-                logger.warning(f"Cache incomplete for {doc_id}: missing {filename}")
-                return False
+    def save_document(
+        self, doc_id: str, file_path: Path, file_extension: str
+    ) -> None:
+        """
+        Save original document to storage.
 
-        return True
+        NEW METHOD - saves the uploaded file itself.
+
+        Args:
+            doc_id: Document ID (SHA-256 hash)
+            file_path: Path to the uploaded file
+            file_extension: File extension (pdf, txt, md, etc.)
+
+        Raises:
+            Exception if save fails
+        """
+        try:
+            self.storage.save_document(doc_id, file_path, file_extension)
+            logger.info(f"Saved original document {doc_id}.{file_extension}")
+        except Exception as e:
+            logger.error(f"Failed to save document {doc_id}: {e}")
+            raise
 
     def save_chunks_and_embeddings(
         self,
         doc_id: str,
+        file_extension: str,
         chunks: List[Dict[str, Any]],
         embeddings: List[List[float]],
         metadata: Dict[str, Any]
@@ -99,6 +139,7 @@ class CacheService:
 
         Args:
             doc_id: Document ID (SHA-256 hash)
+            file_extension: File extension (REQUIRED for S3 folder organization)
             chunks: List of chunk dictionaries
             embeddings: List of embedding vectors (N x 1536)
             metadata: Document metadata (filename, timestamp, etc.)
@@ -112,47 +153,35 @@ class CacheService:
                 f"Chunk/embedding mismatch: {len(chunks)} chunks, {len(embeddings)} embeddings"
             )
 
-        cache_path = self._get_cache_path(doc_id)
-        cache_path.mkdir(parents=True, exist_ok=True)
-
         try:
-            # Save chunks as JSON
-            chunks_file = cache_path / 'chunks.json'
-            with open(chunks_file, 'w', encoding='utf-8') as f:
-                json.dump(chunks, f, indent=2, ensure_ascii=False)
-
-            # Save embeddings as NumPy binary array (float32 for efficiency)
-            embeddings_file = cache_path / 'embeddings.npy'
+            # Convert embeddings to NumPy array
             embeddings_array = np.array(embeddings, dtype=np.float32)
-            np.save(embeddings_file, embeddings_array)
 
-            # Save metadata as JSON
-            metadata_file = cache_path / 'metadata.json'
-            with open(metadata_file, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
+            # Save all files via storage backend
+            self.storage.save_chunks(doc_id, file_extension, chunks)
+            self.storage.save_embeddings(doc_id, file_extension, embeddings_array)
+            self.storage.save_metadata(doc_id, file_extension, metadata)
 
-            # Log cache size
-            total_size = sum(
-                f.stat().st_size for f in cache_path.iterdir() if f.is_file()
-            )
             logger.info(
-                f"Cached {len(chunks)} chunks for {doc_id} "
-                f"({total_size / 1024:.1f} KB total)"
+                f"Cached {len(chunks)} chunks for {doc_id} (type: {file_extension})"
             )
 
         except Exception as e:
-            # Clean up partial cache on failure
-            if cache_path.exists():
-                import shutil
-                shutil.rmtree(cache_path, ignore_errors=True)
+            logger.error(f"Failed to cache document {doc_id}: {e}")
+            # Attempt cleanup on failure (delete partial cache)
+            try:
+                self.storage.delete(doc_id, file_extension)
+            except:
+                pass
             raise Exception(f"Failed to save cache: {str(e)}")
 
-    def load_chunks_and_embeddings(self, doc_id: str) -> Optional[Dict[str, Any]]:
+    def load_chunks_and_embeddings(self, doc_id: str, file_extension: str) -> Optional[Dict[str, Any]]:
         """
         Load cached chunks and embeddings.
 
         Args:
             doc_id: Document ID (SHA-256 hash)
+            file_extension: File extension (needed to find S3 folder)
 
         Returns:
             Dictionary with 'chunks', 'embeddings', and 'metadata' keys,
@@ -161,26 +190,17 @@ class CacheService:
         Note:
             Returns None on any error (graceful degradation)
         """
-        if not self.cache_exists(doc_id):
+        if not self.cache_exists(doc_id, file_extension):
             return None
 
-        cache_path = self._get_cache_path(doc_id)
-
         try:
-            # Load chunks
-            chunks_file = cache_path / 'chunks.json'
-            with open(chunks_file, 'r', encoding='utf-8') as f:
-                chunks = json.load(f)
+            # Load all files from storage backend
+            chunks = self.storage.load_chunks(doc_id, file_extension)
+            embeddings_array = self.storage.load_embeddings(doc_id, file_extension)
+            metadata = self.storage.load_metadata(doc_id, file_extension)
 
-            # Load embeddings
-            embeddings_file = cache_path / 'embeddings.npy'
-            embeddings_array = np.load(embeddings_file)
-            embeddings = embeddings_array.tolist()  # Convert to list for consistency
-
-            # Load metadata
-            metadata_file = cache_path / 'metadata.json'
-            with open(metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
+            # Convert embeddings to list for consistency with API
+            embeddings = embeddings_array.tolist()
 
             # Validate consistency
             if len(chunks) != len(embeddings):
@@ -203,47 +223,27 @@ class CacheService:
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """
-        Get cache statistics.
+        Get cache statistics from storage backend.
 
         Returns:
-            Dictionary with:
-                - total_documents: Number of cached documents
-                - total_size_bytes: Total cache size in bytes
-                - total_size_mb: Total cache size in MB
-                - document_ids: List of cached document IDs
+            Dictionary with storage-specific stats (varies by backend)
         """
-        if not self.cache_dir.exists():
+        try:
+            return self.storage.get_stats()
+        except Exception as e:
+            logger.error(f"Failed to get cache stats: {e}")
             return {
-                'total_documents': 0,
-                'total_size_bytes': 0,
-                'total_size_mb': 0.0,
-                'document_ids': []
+                'error': str(e),
+                'total_documents': 0
             }
 
-        # Find all cache directories
-        cache_dirs = [d for d in self.cache_dir.iterdir() if d.is_dir()]
-        document_ids = [d.name for d in cache_dirs]
-
-        # Calculate total size
-        total_size = 0
-        for cache_dir in cache_dirs:
-            for file in cache_dir.rglob('*'):
-                if file.is_file():
-                    total_size += file.stat().st_size
-
-        return {
-            'total_documents': len(document_ids),
-            'total_size_bytes': total_size,
-            'total_size_mb': round(total_size / (1024 * 1024), 2),
-            'document_ids': document_ids
-        }
-
-    def clear_cache(self, doc_id: Optional[str] = None) -> Dict[str, Any]:
+    def clear_cache(self, doc_id: Optional[str] = None, file_extension: Optional[str] = None) -> Dict[str, Any]:
         """
         Clear cache for specific document or entire cache.
 
         Args:
             doc_id: Document ID to clear, or None to clear all cache
+            file_extension: Required if doc_id provided (to locate S3 folder)
 
         Returns:
             Dictionary with:
@@ -251,40 +251,39 @@ class CacheService:
                 - message: Description of what was cleared
                 - documents_cleared: Number of documents cleared
         """
-        import shutil
-
         try:
             if doc_id:
                 # Clear specific document
-                cache_path = self._get_cache_path(doc_id)
-                if cache_path.exists():
-                    shutil.rmtree(cache_path)
-                    logger.info(f"Cleared cache for document: {doc_id}")
-                    return {
-                        'cleared': True,
-                        'message': f'Cleared cache for document {doc_id}',
-                        'documents_cleared': 1
-                    }
-                else:
+                if not file_extension:
                     return {
                         'cleared': False,
-                        'message': f'No cache found for document {doc_id}',
+                        'message': 'file_extension required when clearing specific document',
                         'documents_cleared': 0
                     }
-            else:
-                # Clear entire cache
-                stats = self.get_cache_stats()
-                doc_count = stats['total_documents']
 
-                if self.cache_dir.exists():
-                    shutil.rmtree(self.cache_dir)
-                    self.cache_dir.mkdir(parents=True, exist_ok=True)
-
-                logger.info(f"Cleared entire cache ({doc_count} documents)")
+                self.storage.delete(doc_id, file_extension)
+                logger.info(f"Cleared cache for document: {doc_id}")
                 return {
                     'cleared': True,
-                    'message': f'Cleared entire cache',
-                    'documents_cleared': doc_count
+                    'message': f'Cleared cache for document {doc_id}',
+                    'documents_cleared': 1
+                }
+            else:
+                # Clear entire cache (WARNING: scans entire bucket in S3)
+                document_ids = self.storage.list_documents()
+                cleared_count = 0
+
+                # Note: For S3, this is a limitation - we don't store doc_id → file_extension mapping
+                # So clearing all cache requires iterating through all documents
+                # For now, we'll just return the count without actually deleting
+                # TODO: Implement full cache clear for S3 if needed
+
+                logger.warning("Clear entire cache not fully implemented for S3 backend")
+                return {
+                    'cleared': False,
+                    'message': 'Clear entire cache not fully implemented for S3 backend',
+                    'documents_cleared': 0,
+                    'total_documents': len(document_ids)
                 }
 
         except Exception as e:

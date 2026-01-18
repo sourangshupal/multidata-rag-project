@@ -214,6 +214,9 @@ async def upload_document(file: UploadFile = File(...)):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
+        # Extract file extension (IMPORTANT for S3 folder organization)
+        file_extension = file_path.suffix.lstrip('.').lower()  # pdf, txt, md, docx, etc.
+
         # NEW: Compute unique document ID from file contents
         doc_id = None
         cache_hit = False
@@ -225,12 +228,12 @@ async def upload_document(file: UploadFile = File(...)):
                 doc_id = cache_service.compute_document_id(file_path)
                 logger.info(f"Document ID computed: {doc_id}")
 
-                # NEW: Check if cache exists for this document
-                if cache_service.cache_exists(doc_id):
+                # NEW: Check if cache exists for this document (pass file_extension)
+                if cache_service.cache_exists(doc_id, file_extension):
                     logger.info(f"Cache HIT for document: {file.filename} (ID: {doc_id[:8]}...)")
 
-                    # Load from cache
-                    cached_data = cache_service.load_chunks_and_embeddings(doc_id)
+                    # Load from cache (pass file_extension)
+                    cached_data = cache_service.load_chunks_and_embeddings(doc_id, file_extension)
 
                     if cached_data:
                         chunks = cached_data['chunks']
@@ -265,6 +268,14 @@ async def upload_document(file: UploadFile = File(...)):
             # NEW: Save to cache if cache service is available
             if cache_service and doc_id:
                 try:
+                    # Save original document to storage (NEW)
+                    cache_service.save_document(
+                        doc_id=doc_id,
+                        file_path=file_path,
+                        file_extension=file_extension
+                    )
+                    logger.info(f"Saved original document to storage: {doc_id}")
+
                     # Prepare metadata
                     metadata = {
                         "document_id": doc_id,
@@ -274,17 +285,19 @@ async def upload_document(file: UploadFile = File(...)):
                         "chunk_count": len(chunks),
                         "embedding_model": "text-embedding-3-small",
                         "chunk_size": settings.CHUNK_SIZE,
-                        "chunk_overlap": settings.CHUNK_OVERLAP
+                        "chunk_overlap": settings.CHUNK_OVERLAP,
+                        "file_extension": file_extension  # NEW: include file extension
                     }
 
-                    # Save to cache
+                    # Save chunks, embeddings, and metadata to cache (pass file_extension)
                     cache_service.save_chunks_and_embeddings(
                         doc_id=doc_id,
+                        file_extension=file_extension,  # NEW parameter
                         chunks=chunks,
                         embeddings=embeddings,
                         metadata=metadata
                     )
-                    logger.info(f"Saved to cache: {doc_id}")
+                    logger.info(f"Saved cache data (chunks, embeddings, metadata): {doc_id}")
 
                 except Exception as e:
                     # Don't fail upload if caching fails
@@ -301,7 +314,7 @@ async def upload_document(file: UploadFile = File(...)):
 
         file_size = file_path.stat().st_size
         total_tokens = sum(chunk['token_count'] for chunk in chunks)
-        file_extension = file_path.suffix.lstrip('.')
+        # file_extension already defined earlier (line 218)
 
         # Update OPIK span with metadata for observability
         if OPIK_AVAILABLE:
@@ -971,9 +984,10 @@ def initialize_services():
         logger.warning("Text-to-SQL features will be unavailable.")
 
     # Initialize cache service (always available, no API key needed)
+    # Auto-selects storage backend based on STORAGE_BACKEND environment variable
     try:
         logger.info("Initializing cache service...")
-        cache_service = CacheService(cache_dir=CACHE_DIR)
+        cache_service = CacheService()  # Auto-selects local or S3 backend
         logger.info("✓ Cache service initialized!")
     except Exception as e:
         logger.error(f"✗ Failed to initialize cache service: {e}")
