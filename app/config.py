@@ -43,9 +43,10 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 50
 
     # Storage paths (defaults to /tmp for Lambda, can be overridden for local dev)
-    UPLOAD_DIR: str = "/tmp/uploads"
-    CACHE_DIR: str = "/tmp/cached_chunks"
-
+    # UPLOAD_DIR: str = "/tmp/uploads"
+    # CACHE_DIR: str = "/tmp/cached_chunks"
+    UPLOAD_DIR: str = "data/uploads"
+    CACHE_DIR: str = "data/cached_chunks"
     @property
     def is_lambda(self) -> bool:
         """Check if running in AWS Lambda environment."""
