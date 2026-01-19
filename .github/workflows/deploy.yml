@@ -35,7 +35,7 @@ jobs:
           echo "   • Lambda Function: ${{ env.LAMBDA_FUNCTION }}"
           echo "   • Platform: linux/arm64"
           echo ""
-          echo "⏱️  Estimated deployment time: 15-20 minutes"
+          echo "⏱️  Estimated deployment time: 2-8 minutes (cached: ~2 min, first build: ~5-8 min)"
           echo "=========================================="
           echo ""
 
@@ -97,51 +97,29 @@ jobs:
           echo ""
 
       - name: Build, tag, and push image to ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.lambda
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: Print build summary
         run: |
-          echo "=========================================="
-          echo "🏗️  Building Docker Image for Lambda"
-          echo "=========================================="
-          echo "ECR Registry: $ECR_REGISTRY"
-          echo "Repository: $ECR_REPOSITORY"
-          echo "Image Tag: $IMAGE_TAG"
-          echo "Platform: linux/arm64"
-          echo "Dockerfile: Dockerfile.lambda"
-          echo ""
-
-          # Build image for ARM64 (20% cheaper Lambda costs)
-          echo "📦 Building ARM64 image..."
-          echo "⏱️  This will take 10-15 minutes (cross-platform build with QEMU emulation)"
-          docker build --platform linux/arm64 -f Dockerfile.lambda -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          echo "✅ Build completed!"
-          echo ""
-
-          # Push to ECR
-          echo "📤 Pushing image to ECR..."
-          echo "Image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "✅ Pushed commit SHA tag"
-          echo ""
-
-          # Tag as latest and arm64
-          echo "🏷️  Creating additional tags..."
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:arm64
-
-          echo "📤 Pushing 'latest' tag..."
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "✅ Pushed 'latest' tag"
-
-          echo "📤 Pushing 'arm64' tag..."
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:arm64
-          echo "✅ Pushed 'arm64' tag"
-          echo ""
-
           echo "=========================================="
           echo "✅ All images pushed to ECR successfully!"
           echo "=========================================="
+          echo "Image URI: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+          echo "Tags: ${{ github.sha }}, latest, arm64"
+          echo "Platform: linux/arm64"
+          echo ""
 
       - name: Update Lambda function
         env:

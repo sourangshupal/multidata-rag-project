@@ -1,9 +1,24 @@
-FROM public.ecr.aws/lambda/python:3.12
+# syntax=docker/dockerfile:1.7
 
 # Cross-Platform Build Support:
 # - For ARM64 (recommended): docker build --platform linux/arm64 ...
 # - For x86_64: docker build --platform linux/amd64 ...
 # See CROSS_PLATFORM_BUILD.md for detailed instructions
+
+# ============================================================================
+# Stage 1: Import UV binary from official image
+# ============================================================================
+FROM ghcr.io/astral-sh/uv:0.9.26 AS uv
+
+# ============================================================================
+# Stage 2: Builder stage - Install dependencies
+# ============================================================================
+FROM public.ecr.aws/lambda/python:3.12 AS builder
+
+# UV environment variables for optimal performance
+ENV UV_COMPILE_BYTECODE=1          # Precompile bytecode (faster cold starts)
+ENV UV_NO_INSTALLER_METADATA=1     # Deterministic layers (smaller image)
+ENV UV_LINK_MODE=copy              # Cache mount compatibility
 
 # Install system dependencies
 # Note: tesseract removed for Lambda - OCR can be added via Lambda layers
@@ -17,14 +32,30 @@ RUN dnf install -y \
     gcc-c++ \
     && dnf clean all
 
-# Install Python dependencies
+# Copy requirements.txt FIRST (layer caching optimization)
+# This ensures package installations are cached separately from code changes
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install mangum
 
-# Copy application code
+# Install Python dependencies with UV + BuildKit cache mount
+# - UV is 10-100x faster than pip for large dependency sets
+# - Cache mount preserves downloads across builds (5-day retention in GitHub Actions)
+# - Packages install to LAMBDA_TASK_ROOT for Lambda compatibility
+RUN --mount=from=uv,source=/uv,target=/bin/uv \
+    --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --no-cache -r requirements.txt --target "${LAMBDA_TASK_ROOT}"
+
+# Copy application code AFTER dependencies
+# This ensures code changes don't invalidate the package cache layer
 COPY app/ ${LAMBDA_TASK_ROOT}/app/
 COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/
+
+# ============================================================================
+# Stage 3: Final minimal runtime image
+# ============================================================================
+FROM public.ecr.aws/lambda/python:3.12
+
+# Copy everything from builder stage
+COPY --from=builder ${LAMBDA_TASK_ROOT} ${LAMBDA_TASK_ROOT}
 
 # Fix file permissions for Lambda runtime
 RUN chmod -R 755 ${LAMBDA_TASK_ROOT}/app && \

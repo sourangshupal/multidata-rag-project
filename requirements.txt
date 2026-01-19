@@ -3,6 +3,7 @@ fastapi[standard]  # Includes uvicorn[standard] with uvloop
 pydantic
 pydantic-settings
 python-multipart
+mangum  # AWS Lambda adapter for FastAPI
 
 # Document Processing
 docling                # Advanced PDF parsing with layout analysis
