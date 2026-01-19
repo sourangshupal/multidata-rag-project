@@ -200,34 +200,29 @@ jobs:
           echo "AWS Region: ${{ env.AWS_REGION }}"
           echo ""
 
-          # Get current environment variables
+          # Fetch and merge environment variables
           echo "📥 Fetching current environment variables..."
-          CURRENT_ENV=$(aws lambda get-function-configuration \
+          aws lambda get-function-configuration \
             --function-name ${{ env.LAMBDA_FUNCTION }} \
             --query 'Environment.Variables' \
-            --output json)
+            --output json > /tmp/current-vars.json
 
-          echo "✅ Current variables fetched"
-          echo ""
-
-          # Merge with S3 configuration
           echo "🔧 Merging S3 storage configuration..."
-          UPDATED_ENV=$(echo "$CURRENT_ENV" | jq '. + {
+          jq '. + {
             "STORAGE_BACKEND": "s3",
             "S3_CACHE_BUCKET": "${{ secrets.S3_CACHE_BUCKET }}",
             "AWS_REGION": "${{ env.AWS_REGION }}",
             "ENVIRONMENT": "production"
-          }')
+          }' /tmp/current-vars.json | jq '{Variables: .}' > /tmp/env-config.json
 
-          echo "✅ Configuration merged"
+          echo "📋 Environment configuration to apply:"
+          cat /tmp/env-config.json | jq .
+
           echo ""
-
-          # Update Lambda environment variables
           echo "📤 Updating Lambda environment variables..."
           aws lambda update-function-configuration \
             --function-name ${{ env.LAMBDA_FUNCTION }} \
-            --environment "Variables=$UPDATED_ENV" \
-            --no-cli-pager > /dev/null
+            --environment file:///tmp/env-config.json
 
           echo "✅ Environment variables updated"
           echo ""
