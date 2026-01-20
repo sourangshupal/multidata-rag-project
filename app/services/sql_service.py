@@ -234,9 +234,33 @@ class VannaAgentWrapper:
         try:
             import psycopg2
             import psycopg2.extras
+            import socket
+            from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-            # Connect to database using the connection string
-            conn = psycopg2.connect(self.postgres_runner.connection_string)
+            # Parse connection string and force IPv4 for Lambda compatibility
+            # AWS Lambda doesn't support IPv6 outbound connections
+            conn_str = self.postgres_runner.connection_string
+
+            # Parse the connection URL
+            parsed = urlparse(conn_str)
+            hostname = parsed.hostname
+
+            # Force IPv4 resolution by resolving hostname to IPv4 address
+            # This prevents psycopg2 from trying to use IPv6
+            try:
+                logger.debug(f"Resolving hostname {hostname} to IPv4...")
+                # Get only IPv4 addresses (AF_INET)
+                addr_info = socket.getaddrinfo(hostname, None, socket.AF_INET)
+                ipv4_address = addr_info[0][4][0]
+                logger.info(f"Resolved {hostname} to IPv4: {ipv4_address}")
+
+                # Replace hostname with IPv4 address in connection string
+                conn_str = conn_str.replace(hostname, ipv4_address)
+            except socket.gaierror as e:
+                logger.warning(f"Failed to resolve hostname to IPv4: {e}, using original hostname")
+
+            # Connect to database using the modified connection string
+            conn = psycopg2.connect(conn_str)
 
             try:
                 # Execute query
