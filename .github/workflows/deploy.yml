@@ -166,7 +166,7 @@ jobs:
           echo "✅ Lambda deployment completed!"
           echo "=========================================="
 
-      - name: Configure Lambda Environment for S3 Storage
+      - name: Configure Lambda Environment (S3 Storage + Redis Cache)
         run: |
           echo ""
           echo "=========================================="
@@ -175,6 +175,7 @@ jobs:
           echo "Function Name: ${{ env.LAMBDA_FUNCTION }}"
           echo "Storage Backend: S3"
           echo "S3 Bucket: ${{ secrets.S3_CACHE_BUCKET }}"
+          echo "Query Cache: Upstash Redis"
           echo "AWS Region: ${{ env.AWS_REGION }}"
           echo ""
 
@@ -185,7 +186,7 @@ jobs:
             --query 'Environment.Variables' \
             --output json > /tmp/current-vars.json
 
-          echo "🔧 Merging S3 storage configuration..."
+          echo "🔧 Merging S3 storage and Redis cache configuration..."
           jq '. + {
             "STORAGE_BACKEND": "s3",
             "S3_CACHE_BUCKET": "${{ secrets.S3_CACHE_BUCKET }}",
@@ -194,6 +195,8 @@ jobs:
             "PINECONE_INDEX_NAME": "${{ secrets.PINECONE_INDEX_NAME }}",
             "OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}",
             "DATABASE_URL": "${{ secrets.DATABASE_URL }}",
+            "UPSTASH_REDIS_URL": "${{ secrets.UPSTASH_REDIS_URL }}",
+            "UPSTASH_REDIS_TOKEN": "${{ secrets.UPSTASH_REDIS_TOKEN }}",
             "ENVIRONMENT": "production",
             "HOME": "/tmp",
             "TMPDIR": "/tmp",
