@@ -17,7 +17,8 @@ logger = logging.getLogger("rag_app.document_service")
 def parse_document(file_path: str) -> str:
     """
     Parse any document type and return extracted text.
-    Uses Unstructured.io to handle PDF, DOCX, CSV, JSON, and other formats.
+    Uses fast direct read for simple text files (.txt, .md, .csv).
+    Uses Unstructured.io for complex formats (PDF, DOCX, JSON, etc.).
 
     Args:
         file_path: Path to the document file
@@ -33,10 +34,29 @@ def parse_document(file_path: str) -> str:
     if not Path(file_path).exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
+    # Fast path for simple text files - bypass unstructured library
+    # This is critical for Lambda performance (avoids 30+ second timeout)
+    file_extension = Path(file_path).suffix.lower()
+    if file_extension in ['.txt', '.md', '.csv', '.log', '.json']:
+        try:
+            logger.info(f"Using fast text read for {file_extension} file")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except UnicodeDecodeError:
+            # Try with different encoding
+            try:
+                with open(file_path, 'r', encoding='latin-1') as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning(f"Fast text read failed: {e}, falling back to unstructured")
+        except Exception as e:
+            logger.warning(f"Fast text read failed: {e}, falling back to unstructured")
+
     try:
-        # Use Unstructured.io's auto partition to handle any file type
+        # Use Unstructured.io's auto partition for complex formats (PDF, DOCX, etc.)
         # strategy="fast" disables OCR (tesseract) for Lambda compatibility
         # OCR can be enabled by adding tesseract Lambda layer and using strategy="hi_res"
+        logger.info(f"Using unstructured library for {file_extension} file")
         elements = partition(
             filename=file_path,
             strategy="fast"  # Fast mode: no OCR, works without tesseract
