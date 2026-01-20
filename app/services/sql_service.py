@@ -218,8 +218,10 @@ class VannaAgentWrapper:
 
     async def _execute_and_extract_results(self, sql: str) -> List[Dict[str, Any]]:
         """
-        Execute SQL via Vanna Agent and extract results from DataFrameComponent.
-        Uses early exit (break) to avoid async generator lifecycle issues in Lambda.
+        Execute SQL directly using PostgresRunner and return results.
+
+        The Agent is designed for end-to-end flow (question → SQL → results).
+        For executing pre-generated SQL, we use the PostgresRunner directly.
 
         Args:
             sql: SQL query to execute
@@ -227,44 +229,26 @@ class VannaAgentWrapper:
         Returns:
             List of row dictionaries
         """
-        request_context = RequestContext()
-        results = []
+        logger.info(f"Executing SQL via PostgresRunner: {sql[:100]}...")
 
-        # Ask Agent to run the SQL
-        message = f"Execute this SQL query:\n\n```sql\n{sql}\n```"
+        try:
+            # Execute SQL directly using the PostgresRunner
+            # This returns a pandas DataFrame
+            df = self.postgres_runner.run_sql(sql)
 
-        logger.info(f"Executing SQL via Vanna Agent: {sql[:100]}...")
+            if df is None or df.empty:
+                logger.info("Query executed successfully but returned no results")
+                return []
 
-        component_count = 0
-        async for component in self.agent.send_message(
-            request_context=request_context,
-            message=message
-        ):
-            component_count += 1
-            rich_comp = component.rich_component
-            component_type = type(rich_comp).__name__
+            # Convert DataFrame to list of dictionaries
+            results = df.to_dict('records')
+            logger.info(f"✓ SQL executed successfully: {len(results)} rows returned")
 
-            # Check for DataFrame component with .rows attribute (primary method)
-            if hasattr(rich_comp, 'rows') and rich_comp.rows:
-                results = rich_comp.rows
-                logger.info(f"✓ Found {len(results)} rows in {component_type} (component #{component_count})")
-                break  # ✅ Exit immediately - critical for Lambda compatibility
+            return results
 
-            # Check for alternative data storage methods
-            if hasattr(rich_comp, 'dataframe') and rich_comp.dataframe is not None:
-                try:
-                    results = rich_comp.dataframe.to_dict('records')
-                    logger.info(f"✓ Found {len(results)} rows in {component_type}.dataframe (component #{component_count})")
-                    break
-                except Exception as e:
-                    logger.debug(f"Could not extract from {component_type}.dataframe: {e}")
-
-        logger.info(f"Processed {component_count} components from Agent")
-
-        if not results:
-            logger.warning("No results found in Agent response stream")
-
-        return results
+        except Exception as e:
+            logger.error(f"SQL execution failed: {e}")
+            raise ValueError(f"Failed to execute SQL: {str(e)}")
 
 
 class TextToSQLService:
