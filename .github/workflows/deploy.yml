@@ -422,6 +422,9 @@ jobs:
             echo ""
             echo "📋 Response:"
             echo "$UPLOAD1_JSON"
+            echo ""
+            echo "📋 Fetching Lambda CloudWatch logs for debugging..."
+            aws logs tail /aws/lambda/rag-text-to-sql --since 5m --format short || echo "⚠️ Could not fetch logs"
             exit 1
           fi
 
