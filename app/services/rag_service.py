@@ -141,13 +141,14 @@ class RAGService:
             } if hasattr(response, 'usage') and response.usage else None
 
             # Combine embedding + LLM usage
+            # Use .get() to handle cases where keys might be missing (e.g., 100% cache hit)
             combined_usage = {
-                "embedding_tokens": embedding_usage['total_tokens'] if embedding_usage else 0,
-                "llm_prompt_tokens": llm_usage['prompt_tokens'] if llm_usage else 0,
-                "llm_completion_tokens": llm_usage['completion_tokens'] if llm_usage else 0,
+                "embedding_tokens": embedding_usage.get('total_tokens', 0) if embedding_usage else 0,
+                "llm_prompt_tokens": llm_usage.get('prompt_tokens', 0) if llm_usage else 0,
+                "llm_completion_tokens": llm_usage.get('completion_tokens', 0) if llm_usage else 0,
                 "total_tokens": (
-                    (embedding_usage['total_tokens'] if embedding_usage else 0) +
-                    (llm_usage['total_tokens'] if llm_usage else 0)
+                    (embedding_usage.get('total_tokens', 0) if embedding_usage else 0) +
+                    (llm_usage.get('total_tokens', 0) if llm_usage else 0)
                 )
             }
 
